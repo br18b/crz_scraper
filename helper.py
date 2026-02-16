@@ -4,14 +4,47 @@ import re
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterator
+from os import PathLike
+from typing import Any, Dict, Iterator, Union
 from collections.abc import Mapping, Iterable
 import unicodedata
+
+Pathish = Union[str, Path, PathLike[str]]
 
 ONE_LETTER_WORDS = {"o", "a", "i", "u", "v", "z", "s", "k"}
 KEEP_UPPER = {"SMS", "MMS", "GDPR", "SR", "EU", "IT", "IS", "API", "SK"}
 
 TOK_RE = re.compile(r"[^\W\d_]{2,}|[^\W\d_]|[0-9]+|[^\s]", re.UNICODE)
+
+def find_project_root(start: Pathish | None = None) -> Path:
+    """
+    Walk up from `start` until we find `.git`.
+    Returns the first directory containing `.git`.
+    Fallback: returns the original starting directory (resolved).
+    Start being a file also works; it will start from the file's parent directory.
+    """
+    if start is None:
+        start_path = Path.cwd()
+    else:
+        start_path = Path(start)
+
+    # avoid exceptions if the path doesn't exist
+    start_path = start_path.expanduser().resolve(strict=False)
+
+    # If caller passed a file path, start from its parent directory
+    if start_path.exists() and start_path.is_file():
+        start_path = start_path.parent
+
+    current = start_path
+    while True:
+        git = current / ".git"
+        if git.exists():  # handles dir, file (worktree/submodule), etc.
+            return current
+
+        parent = current.parent
+        if parent == current:
+            return start_path
+        current = parent
 
 def normalize_ascii_str(s: str) -> str:
     return (
