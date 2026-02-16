@@ -10,6 +10,9 @@
     "edgeScope": "arg_or_conj",
     "mode": "prefix",
     "exclude": ["anonym", "ukonc", "zrusen", "odstupen", "vypoved"],
-    "schema": { "zmluv|dohod": { "poskyt": "udaj|dat" } }
+    "schema": [
+      { "zmluv|dohod": { "poskyt": "udaj|dat" } },
+      { "zmluv|dohod": { "spoluprac": { "poskyt": "udaj|dat" } } }
+    ]
   }
 }
