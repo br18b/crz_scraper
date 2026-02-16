@@ -163,7 +163,6 @@ def load_already_resolved(resolved_path: Path) -> tuple[dict[str, Any], set[int]
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fresh", action="store_true", help="Delete outputs and start from scratch (no resume).")
-    ap.add_argument("--checkpoint-seconds", type=float, default=10.0, help="How often to write checkpoint index.")
     ap.add_argument("--flush-every", type=int, default=200, help="Flush JSONL outputs every N processed ids.")
     args = ap.parse_args()
 
@@ -176,7 +175,6 @@ def main() -> None:
     resolved_path = resolved_dir / "resolved.jsonl"
     unresolved_path = resolved_dir / "unresolved.jsonl"
     index_path = resolved_dir / "index.json"
-    checkpoint_path = resolved_dir / "_checkpoint_index.json"
 
     t0 = time.perf_counter()
     print(f"[start] out_dir={out_dir}", flush=True)
@@ -187,7 +185,6 @@ def main() -> None:
         _unlink_if_exists(resolved_path)
         _unlink_if_exists(unresolved_path)
         _unlink_if_exists(index_path)
-        _unlink_if_exists(checkpoint_path)
 
     # 1) Load collisions
     t_load0 = time.perf_counter()
@@ -294,8 +291,6 @@ def main() -> None:
         smoothing=0.05,
     )
 
-    last_checkpoint = time.perf_counter()
-
     with open(resolved_path, "a", encoding="utf-8") as fr, open(unresolved_path, "a", encoding="utf-8") as fu:
         for idx, cid in enumerate(to_process, start=1):
             resolve_bar.update(1)
@@ -319,7 +314,7 @@ def main() -> None:
                 n_web += 1
                 t_web0 = time.perf_counter()
                 try:
-                    page = fetch_and_parse_crz_id(cid, sleep_s=0.0, session=session, min_interval_s=0.5)
+                    page = fetch_and_parse_crz_id(cid, sleep_s=0.0, session=session, min_interval_s=0.1)
                 except Exception as e:
                     fu.write(
                         json.dumps({"id": cid, "reason": f"fetch failed: {type(e).__name__}: {e}"}, ensure_ascii=False) + "\n"
@@ -379,12 +374,6 @@ def main() -> None:
                 fr.flush()
                 fu.flush()
 
-            # checkpoint every N seconds (index snapshot)
-            now = time.perf_counter()
-            if now - last_checkpoint >= float(args.checkpoint_seconds):
-                checkpoint_path.write_text(json.dumps(resolved_index, ensure_ascii=False, indent=2), encoding="utf-8")
-                last_checkpoint = now
-
         fr.flush()
         fu.flush()
 
@@ -403,7 +392,6 @@ def main() -> None:
     print(f"[out] resolved_jsonl={resolved_path}", flush=True)
     print(f"[out] unresolved_jsonl={unresolved_path}", flush=True)
     print(f"[out] index={index_path}", flush=True)
-    print(f"[out] checkpoint={checkpoint_path}", flush=True)
 
 
 if __name__ == "__main__":
