@@ -1,0 +1,23 @@
+# runtime data
+data/
+data
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# temp
+*.tmp
+*.part
+*.zip
+
+# tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.DS_Store
+
