@@ -6,14 +6,10 @@ import hashlib
 import json
 import re
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from datetime import date
-from zoneinfo import ZoneInfo
-import datetime as _dt
-
 import requests
 from tqdm import tqdm
 from urllib.parse import urljoin
@@ -22,7 +18,7 @@ from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from crz_config import OUT_JSON_DIR, ATT_DIR
+from crz_config import OUT_JSON_DIR
 from helper import squash_spaced_letters
 
 from crz_page import fetch_and_parse_crz_id, fetch_and_parse_crz_url, ascii_key
@@ -35,13 +31,11 @@ from crz_page import fetch_and_parse_crz_id, fetch_and_parse_crz_url, ascii_key
 _RX_ISO = re.compile(r"^\s*(\d{4})-(\d{2})-(\d{2})(?:\s+.*)?$")
 _RX_DMY = re.compile(r"^\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s*$")
 
-def today_bratislava() -> date:
-    return _dt.datetime.now(ZoneInfo("Europe/Bratislava")).date()
 
 def parse_date_any(v: Any) -> Optional[date]:
     """
     Returns a date or None.
-    None means "neuvedený" / "0000-00-00" / empty / unparseable => treat as unlimited validity.
+    None means "neuvedený" / "0000-00-00" / empty / unparseable.
     Accepts:
       - YYYY-MM-DD
       - YYYY-MM-DD HH:MM:SS (or anything after the date)
@@ -51,7 +45,14 @@ def parse_date_any(v: Any) -> Optional[date]:
         return None
 
     s = str(v).strip()
-    if not s or s == "0000-00-00":
+    if not s:
+        return None
+
+    # tolerate our own formatter outputs
+    if s.casefold() in {"neuvedeny", "neuvedený"}:
+        return None
+
+    if s == "0000-00-00":
         return None
 
     m = _RX_ISO.match(s)
@@ -74,10 +75,6 @@ def parse_date_any(v: Any) -> Optional[date]:
 
     return None
 
-def is_expired(v: Any, *, today: date) -> bool:
-    d = parse_date_any(v)
-    # "today is ok, just not before"
-    return (d is not None) and (d < today)
 
 def fmt_date(v: Any) -> str:
     d = parse_date_any(v)
@@ -122,6 +119,7 @@ def _att_blob(a: dict[str, Any]) -> str:
 
 
 LINK_FONT = Font(color="0563C1", underline="single")
+
 
 def apply_link(cell, url: str) -> None:
     cell.hyperlink = url
@@ -178,6 +176,7 @@ def pick_attachment(
 
     if want == "scan":
         if nontext_cand:
+
             def score(a: dict[str, Any]) -> int:
                 b = _att_blob(a)
                 s = 0
@@ -186,6 +185,7 @@ def pick_attachment(
                 if "sken" in b or "scan" in b:
                     s += 5
                 return s
+
             nontext_cand.sort(key=score, reverse=True)
             a = nontext_cand[0]
         else:
@@ -273,24 +273,6 @@ def load_filtered_lines(filtered_jsonl: Path) -> list[dict[str, Any]]:
             except Exception:
                 continue
     return out
-
-
-def parse_ico_allow(args) -> set[str]:
-    allowed: set[str] = set()
-
-    if args.ico_allow:
-        parts = [p.strip() for p in args.ico_allow.split(",") if p.strip()]
-        allowed.update(strip_ico(p) for p in parts if strip_ico(p))
-
-    if args.ico_allow_file:
-        p = Path(args.ico_allow_file)
-        if p.exists():
-            for line in p.read_text(encoding="utf-8").splitlines():
-                s = strip_ico(line.strip())
-                if s:
-                    allowed.add(s)
-
-    return allowed
 
 
 # ----------------------------
@@ -397,13 +379,15 @@ HEADERS = [
     "Text prílohy",
 ]
 
-FILL_A = PatternFill("solid", fgColor="E8F5E9")   # light green
-FILL_B = PatternFill("solid", fgColor="FFFDE7")   # light yellow
-HEADER_FILL = PatternFill("solid", fgColor="ECEFF1")  # light gray-blue
+FILL_A = PatternFill("solid", fgColor="E8F5E9")      # light green
+FILL_B = PatternFill("solid", fgColor="FFFDE7")      # light yellow
+HEADER_FILL = PatternFill("solid", fgColor="ECEFF1") # light gray-blue
+
 
 def apply_row_fill(ws, row: int, max_col: int, fill: PatternFill) -> None:
     for c in range(1, max_col + 1):
         ws.cell(row=row, column=c).fill = fill
+
 
 def set_comment(ws, row: int, col: int, text: str) -> None:
     cell = ws.cell(row=row, column=col)
@@ -535,9 +519,6 @@ def main() -> None:
     ap.add_argument("--filtered-jsonl", type=str, default="", help="Path to filtered.jsonl (overrides --run-dir)")
     ap.add_argument("--out", type=str, default="", help="Output xlsx path (default: <run-dir>/table.xlsx)")
 
-    ap.add_argument("--ico-allow", type=str, default="", help="Comma-separated supplier ICO allowlist (leading zeros ignored)")
-    ap.add_argument("--ico-allow-file", type=str, default="", help="Text file with allowed ICOs (one per line)")
-
     ap.add_argument("--min-interval-s", type=float, default=0.0, help="Throttle between network requests (CRZ fetch)")
     ap.add_argument("--refetch-days", type=float, default=7.0, help="Re-fetch cached pages older than N days")
 
@@ -547,8 +528,6 @@ def main() -> None:
 
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
-
-    TODAY = today_bratislava()
 
     # resolve input paths
     if args.filtered_jsonl:
@@ -567,8 +546,6 @@ def main() -> None:
     rows_jsonl = run_root / "rows.jsonl"
     done_jsonl = run_root / "done_contracts.jsonl"
 
-    allowed_icos = parse_ico_allow(args)
-
     done_cids, seen_row_keys = load_state(rows_jsonl, done_jsonl) if args.resume else (set(), set())
     sess = requests.Session()
 
@@ -577,7 +554,6 @@ def main() -> None:
 
     # stats for progress
     n_skipped_resume = 0
-    n_skipped_allow_early = 0
     n_notfound = 0
     n_amendment = 0
     n_written_rows = len(seen_row_keys)
@@ -601,9 +577,6 @@ def main() -> None:
             continue
         rec = recs[idx_i]
 
-        if is_expired(rec.get("datum_platnost_do"), today=TODAY):
-            continue
-
         # base contract id
         try:
             cid = int(rec.get("ID"))
@@ -620,12 +593,6 @@ def main() -> None:
                 pbar.set_postfix_str(
                     f"done={n_done} rows={n_written_rows} skip_resume={n_skipped_resume} nf={n_notfound}"
                 )
-            continue
-
-        # allowlist EARLY check if ICO present in dump (saves network)
-        supplier_ico_dump = strip_ico(rec.get("ico"))
-        if allowed_icos and supplier_ico_dump and supplier_ico_dump not in allowed_icos:
-            n_skipped_allow_early += 1
             continue
 
         # fetch+parse page
@@ -649,18 +616,13 @@ def main() -> None:
                 print(f"[skip] base id={cid} is an amendment according to CRZ page")
             continue
 
-        # supplier ICO (dump preferred, page fallback)
-        supplier_ico = supplier_ico_dump or strip_ico(get_page_field(page, ident_key="ico_dodavatela"))
-
-        # allowlist LATE check if dump ICO was missing
-        if allowed_icos and supplier_ico and supplier_ico not in allowed_icos:
-            continue
+        # supplier/buyer ICOs
+        supplier_ico = strip_ico(rec.get("ico")) or strip_ico(get_page_field(page, ident_key="ico_dodavatela"))
+        buyer_ico = strip_ico(rec.get("ico1")) or strip_ico(get_page_field(page, ident_key="ico_objednavatela"))
 
         # contract row data (prefer dump, fallback to page)
         supplier_name = squash_spaced_letters(str(rec.get("zs2") or "")) or get_page_field(page, ident_key="dodavatel")
         buyer_name = squash_spaced_letters(str(rec.get("zs1") or "")) or get_page_field(page, ident_key="objednavatel")
-
-        buyer_ico = strip_ico(rec.get("ico1")) or strip_ico(get_page_field(page, ident_key="ico_objednavatela"))
 
         predmet = squash_spaced_letters(str(rec.get("predmet") or "")) or str(page.get("title") or "")
         cislo = str(rec.get("nazov") or "") or get_page_field(page, ident_key="cislo_zmluvy")
@@ -801,10 +763,8 @@ def main() -> None:
         if args.write_xlsx_every and (n_done % int(args.write_xlsx_every) == 0):
             build_xlsx_from_rows(rows_jsonl, out_xlsx)
 
-        # progress info
         pbar.set_postfix_str(
-            f"done={n_done} rows={n_written_rows} skip_resume={n_skipped_resume} "
-            f"skip_allow={n_skipped_allow_early} nf={n_notfound} amend={n_amendment}"
+            f"done={n_done} rows={n_written_rows} skip_resume={n_skipped_resume} nf={n_notfound} amend={n_amendment}"
         )
 
     # final xlsx rebuild
