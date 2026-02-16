@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from datetime import date
+from zoneinfo import ZoneInfo
+import datetime as _dt
+
 import requests
 from tqdm import tqdm
 from urllib.parse import urljoin
@@ -28,35 +32,58 @@ from crz_page import fetch_and_parse_crz_id, fetch_and_parse_crz_url, ascii_key
 # misc helpers
 # ----------------------------
 
-_RX_ISO = re.compile(r"^\s*(\d{4})-(\d{2})-(\d{2})\s*$")
+_RX_ISO = re.compile(r"^\s*(\d{4})-(\d{2})-(\d{2})(?:\s+.*)?$")
 _RX_DMY = re.compile(r"^\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s*$")
 
-def fmt_date(v: Any) -> str:
+def today_bratislava() -> date:
+    return _dt.datetime.now(ZoneInfo("Europe/Bratislava")).date()
+
+def parse_date_any(v: Any) -> Optional[date]:
     """
-    - "0000-00-00", "", None, missing, weird => "neuvedený"
-    - else outputs "dd.mm.yyyy"
+    Returns a date or None.
+    None means "neuvedený" / "0000-00-00" / empty / unparseable => treat as unlimited validity.
+    Accepts:
+      - YYYY-MM-DD
+      - YYYY-MM-DD HH:MM:SS (or anything after the date)
+      - D.M.YYYY / DD.MM.YYYY
     """
-    if v is None:
-        return "neuvedený"
-    if isinstance(v, (int, float)):
-        return "neuvedený"
+    if v is None or isinstance(v, (int, float)):
+        return None
+
     s = str(v).strip()
     if not s or s == "0000-00-00":
-        return "neuvedený"
+        return None
 
     m = _RX_ISO.match(s)
     if m:
-        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        if y == 0 or mo == 0 or d == 0:
-            return "neuvedený"
-        return f"{d:02d}.{mo:02d}.{y:04d}"
+        try:
+            y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if y == 0 or mo == 0 or d == 0:
+                return None
+            return date(y, mo, d)
+        except Exception:
+            return None
 
     m = _RX_DMY.match(s)
     if m:
-        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        return f"{d:02d}.{mo:02d}.{y:04d}"
+        try:
+            d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            return date(y, mo, d)
+        except Exception:
+            return None
 
-    return "neuvedený"
+    return None
+
+def is_expired(v: Any, *, today: date) -> bool:
+    d = parse_date_any(v)
+    # "today is ok, just not before"
+    return (d is not None) and (d < today)
+
+def fmt_date(v: Any) -> str:
+    d = parse_date_any(v)
+    if d is None:
+        return "neuvedený"
+    return f"{d.day:02d}.{d.month:02d}.{d.year:04d}"
 
 
 def digits_only(s: str) -> str:
@@ -521,6 +548,8 @@ def main() -> None:
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
+    TODAY = today_bratislava()
+
     # resolve input paths
     if args.filtered_jsonl:
         filtered_jsonl = Path(args.filtered_jsonl)
@@ -571,6 +600,9 @@ def main() -> None:
         if not recs or idx_i < 0 or idx_i >= len(recs):
             continue
         rec = recs[idx_i]
+
+        if is_expired(rec.get("datum_platnost_do"), today=TODAY):
+            continue
 
         # base contract id
         try:
@@ -633,7 +665,7 @@ def main() -> None:
         predmet = squash_spaced_letters(str(rec.get("predmet") or "")) or str(page.get("title") or "")
         cislo = str(rec.get("nazov") or "") or get_page_field(page, ident_key="cislo_zmluvy")
 
-        d_zver = fmt_date(rec.get("datum_zverejnenie"))
+        d_zver = fmt_date(rec.get("datum_zverejnene"))
         d_uzav = fmt_date(rec.get("potv_datum"))
         d_ucin = fmt_date(rec.get("datum_ucinnost"))
         d_plat = fmt_date(rec.get("datum_platnost_do"))
