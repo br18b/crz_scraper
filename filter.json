@@ -1,0 +1,15 @@
+{
+  "precondition": {
+    "mode": "prefix",
+    "include": ["zmluv|dohod", "poskyt", "udaj|dat"],
+    "exclude": ["anonym", "ukonc", "zrusen", "odstupen", "vypoved"]
+  },
+  "stanza": {
+    "enabled": true,
+    "startDepth": 0,
+    "edgeScope": "arg_or_conj",
+    "mode": "prefix",
+    "exclude": ["anonym", "ukonc", "zrusen", "odstupen", "vypoved"],
+    "schema": { "zmluv|dohod": { "poskyt": "udaj|dat" } }
+  }
+}
